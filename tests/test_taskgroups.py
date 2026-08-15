@@ -1902,10 +1902,14 @@ class TestRefcycles:
         self, anyio_backend_name: str
     ) -> None:
         """Test that TaskGroup's cancel_scope deletes self._host_task"""
-        if anyio_backend_name == "trio" and sys.version_info < (3, 10):
-            pytest.skip(
-                "Trio < 0.30 keeps a reference to the exception in a frame"
-            )
+        if anyio_backend_name == "trio":
+            import trio
+
+            trio_version = tuple(int(part) for part in trio.__version__.split("."))
+            if trio_version < (0, 30):
+                pytest.skip(
+                    "Trio < 0.30 keeps a reference to the exception in a frame"
+                )
 
         tg = create_task_group()
 
