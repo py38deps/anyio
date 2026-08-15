@@ -106,8 +106,14 @@ jobs:
         cache: pip
         cache-dependency-path: pyproject.toml
     - name: Install the project and its dependencies
-      if: matrix.lowest-bound == false
+      if: matrix.lowest-bound == false && matrix.python-version != '3.8'
       run: pip install --group test -e .${{ matrix.extras }}
+    - name: Install the project and its dependencies (Python 3.8)
+      # pip --group requires pip >= 25.1 which no longer supports Python 3.8, so use uv instead
+      if: matrix.lowest-bound == false && matrix.python-version == '3.8'
+      run: |
+        pip install uv
+        uv pip install --system --group test -e .${{ matrix.extras }}
     - name: Install the project and its dependencies (lowest bound)
       if: matrix.lowest-bound == true
       run: |
@@ -164,6 +170,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
+    # Runs unconditionally so dist artifacts are built and uploaded on every push, PR and manual run
     steps:
     - uses: actions/checkout@v7
     - name: Set up Python
