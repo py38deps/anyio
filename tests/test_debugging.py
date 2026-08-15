@@ -106,10 +106,6 @@ async def test_get_running_tasks() -> None:
 @pytest.mark.filterwarnings(
     'ignore:"@coroutine" decorator is deprecated:DeprecationWarning'
 )
-@pytest.mark.skipif(
-    sys.version_info < (3, 10),
-    reason="asyncio.Event() binds to the event loop on Python < 3.10",
-)
 def test_wait_generator_based_task_blocked(
     asyncio_event_loop: asyncio.AbstractEventLoop,
 ) -> None:
@@ -126,8 +122,14 @@ def test_wait_generator_based_task_blocked(
     def generator_part() -> Generator[object, BaseException, None]:
         yield from event.wait()  # type: ignore[misc]
 
-    event = asyncio.Event()
-    gen_task: asyncio.Task[None] = asyncio_event_loop.create_task(generator_part())
+    async def setup() -> None:
+        nonlocal event, gen_task
+        event = asyncio.Event()
+        gen_task = asyncio_event_loop.create_task(generator_part())
+
+    event: asyncio.Event
+    gen_task: asyncio.Task[None]
+    asyncio_event_loop.run_until_complete(setup())
     asyncio_event_loop.run_until_complete(native_coro_part())
 
 
