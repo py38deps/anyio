@@ -343,17 +343,17 @@ class TaskHandle(Generic[T_co, T_startval]):
         :raises TaskCancelled: if the task was cancelled
 
         """
-        match self.status:
-            case TaskHandle.Status.PENDING:
-                raise TaskNotFinished("the task has not finished yet")
-            case TaskHandle.Status.FINISHED:
-                return None
-            case TaskHandle.Status.CANCELLING:
-                raise TaskCancelled("the task was cancelled")
-            case TaskHandle.Status.CANCELLED:
-                raise TaskCancelled("the task was cancelled") from self._exception
-            case TaskHandle.Status.FAILED:
-                return self._exception
+        status = self.status
+        if status is TaskHandle.Status.PENDING:
+            raise TaskNotFinished("the task has not finished yet")
+        elif status is TaskHandle.Status.FINISHED:
+            return None
+        elif status is TaskHandle.Status.CANCELLING:
+            raise TaskCancelled("the task was cancelled")
+        elif status is TaskHandle.Status.CANCELLED:
+            raise TaskCancelled("the task was cancelled") from self._exception
+        else:
+            return self._exception
 
     @property
     def return_value(self) -> T_co:
@@ -365,17 +365,17 @@ class TaskHandle(Generic[T_co, T_startval]):
         :raises TaskFailed: if the task raised an exception
 
         """
-        match self.status:
-            case TaskHandle.Status.PENDING:
-                raise TaskNotFinished("the task has not finished yet")
-            case TaskHandle.Status.FINISHED:
-                return self._return_value
-            case TaskHandle.Status.CANCELLING:
-                raise TaskCancelled("the task was cancelled")
-            case TaskHandle.Status.CANCELLED:
-                raise TaskCancelled("the task was cancelled") from self._exception
-            case TaskHandle.Status.FAILED:
-                raise TaskFailed("the task raised an exception") from self._exception
+        status = self.status
+        if status is TaskHandle.Status.PENDING:
+            raise TaskNotFinished("the task has not finished yet")
+        elif status is TaskHandle.Status.FINISHED:
+            return self._return_value
+        elif status is TaskHandle.Status.CANCELLING:
+            raise TaskCancelled("the task was cancelled")
+        elif status is TaskHandle.Status.CANCELLED:
+            raise TaskCancelled("the task was cancelled") from self._exception
+        else:
+            raise TaskFailed("the task raised an exception") from self._exception
 
     @property
     def start_value(self) -> T_startval:

@@ -144,13 +144,13 @@ def test_asyncio(testdir: Pytester, caplog: LogCaptureFixture) -> None:
         pytestmark = pytest.mark.anyio
 
 
-        class TestClassFixtures:
-            @pytest.fixture(scope='class')
-            @classmethod
-            async def async_class_fixture(cls, anyio_backend):
-                await asyncio.sleep(0)
-                return anyio_backend
+        @pytest.fixture(scope='class')
+        async def async_class_fixture(anyio_backend):
+            await asyncio.sleep(0)
+            return anyio_backend
 
+
+        class TestClassFixtures:
             def test_class_fixture_in_test_method(
                 self,
                 async_class_fixture,
@@ -718,20 +718,20 @@ def test_auto_mode_conflict_warning(testdir: Pytester) -> None:
     ) in result.stdout.str()
 
 
+@pytest.fixture(scope="class")
+def families() -> Sequence[tuple[socket.AddressFamily, str]]:
+    from .test_sockets import has_ipv6
+
+    families: list[tuple[socket.AddressFamily, str]] = [
+        (socket.AF_INET, "127.0.0.1")
+    ]
+    if has_ipv6:
+        families.append((socket.AF_INET6, "::1"))
+
+    return families
+
+
 class TestFreePortFactory:
-    @pytest.fixture(scope="class")
-    @classmethod
-    def families(cls) -> Sequence[tuple[socket.AddressFamily, str]]:
-        from .test_sockets import has_ipv6
-
-        families: list[tuple[socket.AddressFamily, str]] = [
-            (socket.AF_INET, "127.0.0.1")
-        ]
-        if has_ipv6:
-            families.append((socket.AF_INET6, "::1"))
-
-        return families
-
     async def test_tcp_factory(
         self,
         families: Sequence[tuple[socket.AddressFamily, str]],

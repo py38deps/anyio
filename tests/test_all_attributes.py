@@ -28,7 +28,7 @@ def test_all_attributes() -> None:
         if not isinstance(all_names, tuple):
             pytest.fail(f"{module.__name__}.__all__ is not a tuple")
 
-        exported_names = set[str]()
+        exported_names: set[str] = set()
         for attr in dir(module):
             if attr.startswith("_"):
                 continue

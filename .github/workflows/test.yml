@@ -4,6 +4,7 @@ on:
   push:
     branches: [master]
   pull_request:
+  workflow_dispatch:   # manual trigger button on GitHub Actions page
 
 jobs:
   changed-files:
@@ -61,18 +62,18 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15", "pypy3.11-v7.3.23"]
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15", "pypy3.11-v7.3.23"]
         extras: ["[trio]"]
         lowest-bound: [false]
         include:
         - os: macos-latest
-          python-version: "3.10"
+          python-version: "3.8"
           extras: "[trio]"
         - os: macos-latest
           python-version: "3.14"
           extras: "[trio]"
         - os: windows-latest
-          python-version: "3.10"
+          python-version: "3.8"
           extras: "[trio]"
         - os: windows-latest
           python-version: "3.14"
@@ -83,7 +84,7 @@ jobs:
           extras: ""
         - name: oldest dependencies
           os: ubuntu-latest
-          python-version: "3.10"
+          python-version: "3.8"
           extras: "[trio]"
           lowest-bound: true
     runs-on: ${{ matrix.os }}
@@ -160,6 +161,24 @@ jobs:
       run: pip install --group doc -e .
     - name: Build documentation
       run: sphinx-build -W docs build/sphinx
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.8"
+    - name: Install dependencies
+      run: pip install build
+    - name: Create packages
+      run: python -m build
+    - name: Upload dist
+      uses: actions/upload-artifact@v4
+      with:
+        name: dist
+        path: dist/
 
   coveralls:
     name: Finish Coveralls

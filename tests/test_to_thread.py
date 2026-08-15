@@ -252,6 +252,10 @@ def test_asyncio_run_sync_multiple(
             assert not t.is_alive()
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 10),
+    reason="asyncio.Event() binds to the event loop on Python < 3.10",
+)
 def test_asyncio_no_recycle_stopping_worker(
     asyncio_event_loop: asyncio.AbstractEventLoop,
 ) -> None:

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import sys
 from collections.abc import (
-    AsyncGenerator,
     AsyncIterable,
-    AsyncIterator,
     Iterable,
     Iterator,
 )
-from typing import Any, TypeVar, cast
+
+if sys.version_info >= (3, 9):
+    from collections.abc import AsyncGenerator, AsyncIterator
+else:
+    from typing import AsyncGenerator, AsyncIterator
+from typing import Any, List, TypeVar, cast
 
 import pytest
 
@@ -39,6 +43,10 @@ from anyio.lowlevel import (
     checkpoint,
     checkpoint_if_cancelled,
 )
+
+if sys.version_info < (3, 10):
+    # anext() was added in Python 3.10
+    from .conftest import anext
 
 T = TypeVar("T")
 
@@ -978,7 +986,9 @@ class TestTee:
 
     async def test_checkpoints_empty_iterable(self) -> None:
         iterator: AsyncIterator[int]
-        (iterator,) = tee(cast(list[int], []), 1)
+        (iterator,) = tee(
+            cast(list[int] if sys.version_info >= (3, 9) else List[int], []), 1
+        )
         await assert_cancelled_on_first_next(iterator)
 
     async def test_checkpoints_buffered_replay(self) -> None:

@@ -8,10 +8,20 @@ import sys
 import time
 from asyncio import CancelledError
 from collections.abc import AsyncGenerator, Coroutine, Generator
-from contextlib import aclosing
+from contextlib import asynccontextmanager
 from contextvars import ContextVar, copy_context
-from typing import Any, NoReturn, cast
+from typing import Any, NoReturn, Type, cast
 from unittest import mock
+
+if sys.version_info >= (3, 10):
+    from contextlib import aclosing
+else:
+    @asynccontextmanager
+    async def aclosing(thing: AsyncGenerator[Any, Any]):
+        try:
+            yield thing
+        finally:
+            await thing.aclose()
 
 import pytest
 from pytest import FixtureRequest, MonkeyPatch
@@ -44,6 +54,12 @@ from .conftest import asyncio_params, no_other_refs
 
 if sys.version_info < (3, 11):
     from exceptiongroup import BaseExceptionGroup, ExceptionGroup
+
+
+def _supports_cancel_reason(anyio_backend_name: str) -> bool:
+    # Cancellation reasons require asyncio >= 3.9 (Task.cancel(msg)) or Trio >= 0.30
+    # (CancelScope.cancel(reason)); the newest Trio on Python < 3.9 is 0.27
+    return sys.version_info >= (3, 9)
 
 
 async def async_error(text: str, delay: float = 0.1) -> NoReturn:
@@ -489,7 +505,10 @@ async def test_cancel() -> None:
     assert started
 
 
-async def test_cancel_with_reason() -> None:
+async def test_cancel_with_reason(anyio_backend_name: str) -> None:
+    if not _supports_cancel_reason(anyio_backend_name):
+        pytest.skip("Cancellation reasons are not supported on this backend/Python")
+
     async with create_task_group() as tg:
         tg.cancel("test reason")
         with pytest.raises(get_cancelled_exc_class(), match="test reason"):
@@ -653,13 +672,14 @@ async def test_cancel_scope_cleared() -> None:
 
 
 @pytest.mark.parametrize("delay", [0, 0.1], ids=["instant", "delayed"])
-async def test_fail_after(delay: float) -> None:
+async def test_fail_after(delay: float, anyio_backend_name: str) -> None:
     with pytest.raises(TimeoutError):
         with fail_after(delay) as scope:
             try:
                 await sleep(1)
             except get_cancelled_exc_class() as exc:
-                assert "deadline" in str(exc)
+                if _supports_cancel_reason(anyio_backend_name):
+                    assert "deadline" in str(exc)
                 raise
             else:
                 pytest.fail("sleep() should have raised a cancellation exception")
@@ -1499,6 +1519,10 @@ async def test_cancelscope_exit_in_wrong_task() -> None:
                 tg.start_soon(exit_scope, scope)
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 9),
+    reason="asyncio.run() shutdown logs an unhandled exception on Python 3.8",
+)
 def test_unhandled_exception_group(caplog: pytest.LogCaptureFixture) -> None:
     def crash() -> NoReturn:
         raise KeyboardInterrupt
@@ -1874,8 +1898,15 @@ class TestRefcycles:
         assert isinstance(exc, _Done)
         assert gc.get_referrers(exc) == no_other_refs()
 
-    async def test_exception_refcycles_parent_task(self) -> None:
+    async def test_exception_refcycles_parent_task(
+        self, anyio_backend_name: str
+    ) -> None:
         """Test that TaskGroup's cancel_scope deletes self._host_task"""
+        if anyio_backend_name == "trio" and sys.version_info < (3, 10):
+            pytest.skip(
+                "Trio < 0.30 keeps a reference to the exception in a frame"
+            )
+
         tg = create_task_group()
 
         class _Done(Exception):
@@ -2024,7 +2055,12 @@ async def test_patched_asyncio_task(monkeypatch: MonkeyPatch) -> None:
 
 async def test_exception_groups_suppresses_exc_context() -> None:
     with pytest.raises(
-        cast(type[ExceptionGroup[Exception]], ExceptionGroup)
+        cast(
+            type[ExceptionGroup[Exception]]
+            if sys.version_info >= (3, 9)
+            else Type[ExceptionGroup],
+            ExceptionGroup,
+        )
     ) as exc_info:
         async with create_task_group():
             raise Exception("Error")
@@ -2032,7 +2068,10 @@ async def test_exception_groups_suppresses_exc_context() -> None:
     assert exc_info.value.__suppress_context__
 
 
-async def test_cancel_reason() -> None:
+async def test_cancel_reason(anyio_backend_name: str) -> None:
+    if not _supports_cancel_reason(anyio_backend_name):
+        pytest.skip("Cancellation reasons are not supported on this backend/Python")
+
     with CancelScope() as scope:
         scope.cancel("test reason")
         with pytest.raises(get_cancelled_exc_class()) as exc_info:

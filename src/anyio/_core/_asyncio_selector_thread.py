@@ -16,7 +16,9 @@ _selector: Selector | None = None
 
 class Selector:
     def __init__(self) -> None:
-        self._thread = threading.Thread(target=self.run, name="AnyIO socket selector")
+        self._thread = threading.Thread(
+            target=self.run, name="AnyIO socket selector", daemon=True
+        )
         self._selector = DefaultSelector()
         self._send, self._receive = socket.socketpair()
         self._send.setblocking(False)
@@ -43,7 +45,12 @@ class Selector:
 
     def start(self) -> None:
         self._thread.start()
-        threading._register_atexit(self._stop)  # type: ignore[attr-defined]
+        if hasattr(threading, "_register_atexit"):
+            threading._register_atexit(self._stop)  # type: ignore[attr-defined]
+        else:
+            import atexit
+
+            atexit.register(self._stop)
 
     def _stop(self) -> None:
         global _selector

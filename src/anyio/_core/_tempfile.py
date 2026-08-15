@@ -488,8 +488,9 @@ class TemporaryDirectory(Generic[AnyStr]):
             "suffix": self.suffix,
             "prefix": self.prefix,
             "dir": self.dir,
-            "ignore_cleanup_errors": self.ignore_cleanup_errors,
         }
+        if sys.version_info >= (3, 10):
+            params["ignore_cleanup_errors"] = self.ignore_cleanup_errors
         if sys.version_info >= (3, 12):
             params["delete"] = self.delete
 

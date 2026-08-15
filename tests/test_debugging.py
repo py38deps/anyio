@@ -93,7 +93,7 @@ async def test_get_running_tasks() -> None:
         "task2",
         "tests.test_debugging.test_get_running_tasks.<locals>.inspect",
     ]
-    for task, expected_name in zip(task_infos, expected_names, strict=True):
+    for task, expected_name in zip(task_infos, expected_names):
         assert task.parent_id == host_task.id
         assert task.name == expected_name
         assert repr(task).endswith(f"TaskInfo(id={task.id}, name={expected_name!r})")
@@ -105,6 +105,10 @@ async def test_get_running_tasks() -> None:
 )
 @pytest.mark.filterwarnings(
     'ignore:"@coroutine" decorator is deprecated:DeprecationWarning'
+)
+@pytest.mark.skipif(
+    sys.version_info < (3, 10),
+    reason="asyncio.Event() binds to the event loop on Python < 3.10",
 )
 def test_wait_generator_based_task_blocked(
     asyncio_event_loop: asyncio.AbstractEventLoop,

@@ -29,18 +29,34 @@ import sys
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
-    AsyncIterator,
     Awaitable,
     Callable,
     Iterable,
     Iterator,
 )
+
+if sys.version_info >= (3, 9):
+    from collections.abc import AsyncIterator
+else:
+    from typing import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar, cast, overload
 
 from ._core._synchronization import Lock
 from ._core._tasks import CancelScope
 from .lowlevel import cancel_shielded_checkpoint, checkpoint, checkpoint_if_cancelled
+
+if sys.version_info < (3, 10):
+    # anext() was added in Python 3.10
+    async def _anext(aiter: Any, default: Any = ...) -> Any:
+        try:
+            return await aiter.__anext__()
+        except StopAsyncIteration:
+            if default is not ...:
+                return default
+            raise
+else:
+    from builtins import anext as _anext
 
 T = TypeVar("T")
 R = TypeVar("R")
@@ -93,7 +109,7 @@ class _TeeState(Generic[T]):
             if link.filled:
                 return True
 
-            link.value = await anext(self.iterator, _tee_end)
+            link.value = await _anext(self.iterator, _tee_end)
             if link.value is not _tee_end:
                 link.next = _TeeLink()
 
@@ -153,7 +169,7 @@ async def accumulate(
     iterator = _iterate(iterable)
     if initial is None:
         try:
-            total = await anext(iterator)
+            total = await _anext(iterator)
         except StopAsyncIteration:
             await checkpoint()
             return
@@ -181,7 +197,7 @@ async def batched(
         batch: list[T] = []
         for _ in range(n):
             try:
-                batch.append(await anext(iterator))
+                batch.append(await _anext(iterator))
             except StopAsyncIteration:
                 if not batch:
                     await checkpoint()
@@ -255,8 +271,8 @@ async def compress(
 
     while True:
         try:
-            datum = await anext(data_iterator)
-            selector = await anext(selector_iterator)
+            datum = await _anext(data_iterator)
+            selector = await _anext(selector_iterator)
         except StopAsyncIteration:
             if not element_yielded:
                 await checkpoint()
@@ -349,7 +365,7 @@ async def groupby(
 ) -> AsyncGenerator[tuple[object, list[T]], None]:
     iterator = _iterate(iterable)
     try:
-        element = await anext(iterator)
+        element = await _anext(iterator)
     except StopAsyncIteration:
         await checkpoint()
         return
@@ -445,7 +461,7 @@ async def islice(
 
     while stop is None or index < stop:
         try:
-            element = await anext(iterator)
+            element = await _anext(iterator)
         except StopAsyncIteration:
             if not element_yielded:
                 await checkpoint()
@@ -468,7 +484,7 @@ async def pairwise(
 ) -> AsyncGenerator[tuple[T, T], None]:
     iterator = _iterate(iterable)
     try:
-        previous = await anext(iterator)
+        previous = await _anext(iterator)
     except StopAsyncIteration:
         await checkpoint()
         return
@@ -608,7 +624,7 @@ async def zip_longest(
                 continue
 
             try:
-                value = await anext(iterator)
+                value = await _anext(iterator)
             except StopAsyncIteration:
                 active[index] = False
                 num_active -= 1

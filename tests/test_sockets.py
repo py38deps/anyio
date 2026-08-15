@@ -23,6 +23,13 @@ from ssl import SSLContext, SSLError
 from threading import Thread
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol, TypeVar, cast
 from unittest import mock
+
+if sys.version_info >= (3, 9):
+    _SockAddrType = tuple[str, int]
+else:
+    from typing import Tuple
+
+    _SockAddrType = Tuple[str, int]
 from unittest.mock import MagicMock, patch
 
 import psutil
@@ -1152,15 +1159,12 @@ class TestTCPListener:
         mock_socket_instance = MagicMock()
         mock_socket_instance.bind.side_effect = raise_oserror
         asynclib = get_async_backend()
-        with (
-            patch("anyio._core._sockets.socket") as mock_anyio_sockets,
-            patch.object(
-                asynclib, "create_tcp_listener", return_value=MagicMock(SocketListener)
-            ),
-            pytest.raises(
-                OSError, match="Could not create 2 listeners with a consistent port"
-            ),
-        ):
+        with patch("anyio._core._sockets.socket") as mock_anyio_sockets, \
+                patch.object(
+                    asynclib, "create_tcp_listener", return_value=MagicMock(SocketListener)
+                ), pytest.raises(
+                    OSError, match="Could not create 2 listeners with a consistent port"
+                ):
             mock_anyio_sockets.socket.configure_mock(return_value=mock_socket_instance)
             await create_tcp_listener(local_host="localhost")
 
@@ -1632,10 +1636,8 @@ class TestUNIXListener:
             async with stream:
                 await stream.send(b"Hello\n")
 
-        async with (
-            await create_unix_listener(socket_path) as listener,
-            create_task_group() as tg,
-        ):
+        async with await create_unix_listener(socket_path) as listener, \
+                create_task_group() as tg:
             tg.start_soon(listener.serve, handle)
             await wait_all_tasks_blocked()
 
@@ -1791,7 +1793,7 @@ class TestUDPSocket:
             local_host="localhost", family=family
         ) as sock:
             host, port = cast(
-                tuple[str, int], sock.extra(SocketAttribute.local_address)
+                _SockAddrType, sock.extra(SocketAttribute.local_address)
             )
             await sock.sendto(b"blah", host, port)
             request, addr = await sock.receive()
@@ -1812,7 +1814,7 @@ class TestUDPSocket:
             family=family, local_host="localhost"
         ) as server:
             host, port = cast(
-                tuple[str, int], server.extra(SocketAttribute.local_address)
+                _SockAddrType, server.extra(SocketAttribute.local_address)
             )
             async with await create_udp_socket(
                 family=family, local_host="localhost"
@@ -1879,7 +1881,7 @@ class TestUDPSocket:
         udp = await create_udp_socket(
             family=AddressFamily.AF_INET, local_host="localhost"
         )
-        host, port = cast(tuple[str, int], udp.extra(SocketAttribute.local_address))
+        host, port = cast(_SockAddrType, udp.extra(SocketAttribute.local_address))
         await udp.aclose()
         with pytest.raises(ClosedResourceError):
             await udp.sendto(b"foo", host, port)
@@ -1960,13 +1962,13 @@ class TestConnectedUDPSocket:
             family=family, local_host="localhost"
         ) as udp1:
             host, port = cast(
-                tuple[str, int], udp1.extra(SocketAttribute.local_address)
+                _SockAddrType, udp1.extra(SocketAttribute.local_address)
             )
             async with await create_connected_udp_socket(
                 host, port, local_host="localhost", family=family
             ) as udp2:
                 host, port = cast(
-                    tuple[str, int], udp2.extra(SocketAttribute.local_address)
+                    _SockAddrType, udp2.extra(SocketAttribute.local_address)
                 )
                 await udp2.send(b"blah")
                 request = await udp1.receive()
@@ -1985,11 +1987,11 @@ class TestConnectedUDPSocket:
             family=family, local_host="localhost"
         ) as udp1:
             host, port = cast(
-                tuple[str, int], udp1.extra(SocketAttribute.local_address)
+                _SockAddrType, udp1.extra(SocketAttribute.local_address)
             )
             async with await create_connected_udp_socket(host, port) as udp2:
                 host, port = cast(
-                    tuple[str, int], udp2.extra(SocketAttribute.local_address)
+                    _SockAddrType, udp2.extra(SocketAttribute.local_address)
                 )
                 async with create_task_group() as tg:
                     tg.start_soon(serve)

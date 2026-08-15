@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import sys
 from typing import TypeVar
 from warnings import warn
 
@@ -12,10 +13,19 @@ from ..streams.memory import (
 
 T_Item = TypeVar("T_Item")
 
+if sys.version_info >= (3, 9):
+    _MemoryObjectStreamPair = tuple[
+        MemoryObjectSendStream[T_Item], MemoryObjectReceiveStream[T_Item]
+    ]
+else:
+    from typing import Tuple
 
-class create_memory_object_stream(
-    tuple[MemoryObjectSendStream[T_Item], MemoryObjectReceiveStream[T_Item]],
-):
+    _MemoryObjectStreamPair = Tuple[
+        MemoryObjectSendStream[T_Item], MemoryObjectReceiveStream[T_Item]
+    ]
+
+
+class create_memory_object_stream(_MemoryObjectStreamPair):
     """
     Create a memory object stream.
 

@@ -151,11 +151,9 @@ async def test_open_process_connect_to_file(tmp_path: Path) -> None:
     stdinfile.write_text("Hello, process!\n")
     stdoutfile = tmp_path / "stdout"
     stderrfile = tmp_path / "stderr"
-    with (
-        stdinfile.open("rb") as fin,
-        stdoutfile.open("wb") as fout,
-        stderrfile.open("wb") as ferr,
-    ):
+    with stdinfile.open("rb") as fin, \
+            stdoutfile.open("wb") as fout, \
+            stderrfile.open("wb") as ferr:
         async with await open_process(
             [
                 sys.executable,
@@ -184,11 +182,9 @@ async def test_run_process_connect_to_file(tmp_path: Path) -> None:
     stdinfile.write_text("Hello, process!\n")
     stdoutfile = tmp_path / "stdout"
     stderrfile = tmp_path / "stderr"
-    with (
-        stdinfile.open("rb") as fin,
-        stdoutfile.open("wb") as fout,
-        stderrfile.open("wb") as ferr,
-    ):
+    with stdinfile.open("rb") as fin, \
+            stdoutfile.open("wb") as fout, \
+            stderrfile.open("wb") as ferr:
         await run_process(
             [
                 sys.executable,
@@ -393,11 +389,14 @@ async def test_arguments_passed_through(mocker: MockerFixture) -> None:
         "creationflags": 4,
         "start_new_session": True,
         "pass_fds": (5, 6),
-        "user": "myuser",
-        "group": "mygroup",
-        "extra_groups": [1, 2, "foo"],
-        "umask": 123,
     }
+    if sys.version_info >= (3, 9):
+        kwargs.update(
+            user="myuser",
+            group="mygroup",
+            extra_groups=[1, 2, "foo"],
+            umask=123,
+        )
     mock_open_process = mocker.patch.object(get_async_backend(), "open_process")
     await open_process(command, **kwargs)
     mock_open_process.assert_called_once_with(command, **kwargs)
@@ -422,10 +421,8 @@ async def test_close_while_reading() -> None:
     time.sleep(3)
     """)
 
-    async with (
-        await open_process([sys.executable, "-c", code]) as process,
-        create_task_group() as tg,
-    ):
+    async with await open_process([sys.executable, "-c", code]) as process, \
+            create_task_group() as tg:
         assert process.stdout
         tg.start_soon(process.stdout.aclose)
         with pytest.raises(ClosedResourceError):

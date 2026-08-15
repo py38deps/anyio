@@ -20,12 +20,12 @@ async def limiter(request: FixtureRequest) -> CapacityLimiter | None:
     return CapacityLimiter(10) if request.param else None
 
 
-class TestAsyncFile:
-    @pytest.fixture(scope="class")
-    @classmethod
-    def testdata(cls) -> bytes:
-        return b"".join(bytes([i] * 1000) for i in range(10))
+@pytest.fixture(scope="class")
+def testdata() -> bytes:
+    return b"".join(bytes([i] * 1000) for i in range(10))
 
+
+class TestAsyncFile:
     @pytest.fixture
     def testdatafile(
         self, tmp_path_factory: TempPathFactory, testdata: bytes

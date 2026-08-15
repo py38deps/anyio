@@ -15,7 +15,12 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import wraps
 from ssl import SSLContext
-from typing import Any, TypeAlias, TypeVar
+from typing import Any, Tuple, TypeVar
+
+if sys.version_info >= (3, 10):
+    from typing import TypeAlias
+else:
+    from typing_extensions import TypeAlias
 
 from .. import (
     BrokenResourceError,
@@ -46,8 +51,8 @@ else:
 
 T_Retval = TypeVar("T_Retval")
 PosArgsT = TypeVarTuple("PosArgsT")
-_PCTRTT: TypeAlias = tuple[tuple[str, str], ...]
-_PCTRTTT: TypeAlias = tuple[_PCTRTT, ...]
+_PCTRTT: TypeAlias = Tuple[Tuple[str, str], ...]
+_PCTRTTT: TypeAlias = Tuple[_PCTRTT, ...]
 
 
 class TLSAttribute(TypedAttributeSet):

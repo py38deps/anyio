@@ -24,13 +24,17 @@ from collections import OrderedDict, deque
 from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
-    Awaitable,
     Callable,
     Collection,
     Coroutine,
     Iterable,
     Sequence,
 )
+
+if sys.version_info >= (3, 9):
+    from collections.abc import Awaitable
+else:
+    from typing import Awaitable
 from concurrent.futures import Future
 from contextlib import AbstractContextManager
 from contextvars import Context, copy_context
@@ -53,10 +57,16 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Literal,
-    ParamSpec,
+    Tuple,
     TypeVar,
+    Union,
     cast,
 )
+
+if sys.version_info >= (3, 10):
+    from typing import ParamSpec
+else:
+    from typing_extensions import ParamSpec
 from weakref import WeakKeyDictionary
 
 from .. import (
@@ -109,6 +119,8 @@ if TYPE_CHECKING:
     from _typeshed import FileDescriptorLike
 else:
     FileDescriptorLike = object
+
+IS_PY39_PLUS = sys.version_info >= (3, 9)
 
 if sys.version_info >= (3, 11):
     from asyncio import Runner
@@ -502,11 +514,20 @@ class CancelScope(BaseCancelScope):
 
                 # Update cancelled_caught and check for exceptions we must not swallow
                 if isinstance(exc_val, BaseExceptionGroup):
-                    cancelleds_caught, remaining = exc_val.split(
-                        lambda exc: (
-                            isinstance(exc, CancelledError)
-                            and is_anyio_cancellation(exc)
+
+                    def is_anyio_cancellation_in_group(exc: BaseException) -> bool:
+                        if not IS_PY39_PLUS:
+                            if type(exc) is concurrent.futures.CancelledError:
+                                return True
+                            if isinstance(exc, CancelledError) and self._cancel_called:
+                                return True
+
+                        return isinstance(exc, CancelledError) and is_anyio_cancellation(
+                            exc
                         )
+
+                    cancelleds_caught, remaining = exc_val.split(
+                        is_anyio_cancellation_in_group
                     )
 
                     if cancelleds_caught is None:
@@ -532,8 +553,23 @@ class CancelScope(BaseCancelScope):
                     ):
                         self._cancelled_caught = True
                         return True
-                    else:
+
+                    if IS_PY39_PLUS:
                         return False
+
+                    # On Python 3.8, Task.cancel() does not accept a message, so
+                    # cancellations delivered via _deliver_cancellation() are recognized
+                    # by the cancel reason marker, and cancelled worker threads surface
+                    # as concurrent.futures.CancelledError (see run_sync())
+                    if type(exc_val) is concurrent.futures.CancelledError or (
+                        isinstance(exc_val, CancelledError)
+                        and getattr(self._host_task, "_anyio_cancel_marker", False)
+                    ):
+                        self._host_task._anyio_cancel_marker = None  # type: ignore[attr-defined]
+                        self._cancelled_caught = True
+                        return True
+
+                    return False
             else:
                 if self._pending_uncancellations:
                     assert self._parent_scope is not None
@@ -604,7 +640,16 @@ class CancelScope(BaseCancelScope):
             if task is not current and (task is self._host_task or _task_started(task)):
                 waiter = task._fut_waiter  # type: ignore[attr-defined]
                 if not isinstance(waiter, asyncio.Future) or not waiter.done():
-                    task.cancel(origin._cancel_reason)
+                    if IS_PY39_PLUS:
+                        task.cancel(origin._cancel_reason)
+                    else:
+                        # Python 3.8's Task.cancel() does not accept a message, so
+                        # store the cancel reason on the task so that cancel scopes
+                        # can recognize the cancellation as coming from AnyIO (see
+                        # is_anyio_cancellation())
+                        task._anyio_cancel_marker = origin._cancel_reason  # type: ignore[attr-defined]
+                        task.cancel()
+
                     if (
                         task is origin._host_task
                         and origin._pending_uncancellations is not None
@@ -975,7 +1020,11 @@ class TaskGroup(abc.TaskGroup):
 # Threads
 #
 
-_Retval_Queue_Type = tuple[T_Retval | None, BaseException | None]
+_Retval_Queue_Type: Any
+if IS_PY39_PLUS:
+    _Retval_Queue_Type = tuple[Union[T_Retval, None], Union[BaseException, None]]
+else:
+    _Retval_Queue_Type = Tuple[Union[T_Retval, None], Union[BaseException, None]]
 
 
 class WorkerThread(Thread):
@@ -2351,9 +2400,14 @@ class TestRunner(abc.TestRunner):
         **kwargs: P.kwargs,
     ) -> T_Retval:
         if not self._runner_task:
-            self._send_stream, receive_stream = create_memory_object_stream[
-                tuple[Awaitable[Any], asyncio.Future]
-            ](1)
+            if IS_PY39_PLUS:
+                self._send_stream, receive_stream = create_memory_object_stream[
+                    tuple[Awaitable[Any], asyncio.Future]
+                ](1)  # type: ignore[misc]
+            else:
+                self._send_stream, receive_stream = create_memory_object_stream[
+                    Tuple[Awaitable[Any], asyncio.Future]
+                ](1)  # type: ignore[misc]
             self._runner_task = self.get_loop().create_task(
                 self._run_tests_and_fixtures(receive_stream)
             )
@@ -2602,7 +2656,10 @@ class AsyncIOBackend(AsyncBackend):
 
         async with limiter or cls.current_default_thread_limiter():
             with CancelScope(shield=not abandon_on_cancel) as scope:
-                future = asyncio.Future[T_Retval]()
+                if IS_PY39_PLUS:
+                    future: asyncio.Future[T_Retval] = asyncio.Future[T_Retval]()
+                else:
+                    future = asyncio.Future()  # type: ignore[no-redef]
                 root_task = find_root_task()
                 if not idle_workers:
                     worker = WorkerThread(root_task, workers, idle_workers)
@@ -2668,6 +2725,17 @@ class AsyncIOBackend(AsyncBackend):
             try:
                 return await func(*args)
             except CancelledError as exc:
+                task = cast(asyncio.Task, current_task())
+                if not IS_PY39_PLUS and getattr(
+                    task, "_anyio_cancel_marker", False
+                ):
+                    # On Python 3.8, Task.cancel() does not accept a message, so the
+                    # cancel reason stored by _deliver_cancellation() is propagated
+                    # here as a message so that is_anyio_cancellation() can recognize
+                    # the cancellation on the host side
+                    cancel_reason = task._anyio_cancel_marker  # type: ignore[attr-defined]
+                    task._anyio_cancel_marker = None  # type: ignore[attr-defined]
+                    raise concurrent.futures.CancelledError(cancel_reason) from None
                 raise concurrent.futures.CancelledError(str(exc)) from None
             finally:
                 if scope is not None:
@@ -2778,8 +2846,13 @@ class AsyncIOBackend(AsyncBackend):
     async def connect_tcp(
         cls, host: str, port: int, local_address: IPSockAddrType | None = None
     ) -> abc.SocketStream:
+        pair_type = (
+            tuple[asyncio.Transport, StreamProtocol]
+            if IS_PY39_PLUS
+            else Tuple[asyncio.Transport, StreamProtocol]
+        )
         transport, protocol = cast(
-            tuple[asyncio.Transport, StreamProtocol],
+            pair_type,
             await get_running_loop().create_connection(
                 StreamProtocol, host, port, local_addr=local_address
             ),

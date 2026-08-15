@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import sys
 from collections.abc import AsyncIterable, Iterable, Mapping, Sequence
 from io import BytesIO
 from os import PathLike
 from subprocess import PIPE, CalledProcessError, CompletedProcess
-from typing import IO, Any, TypeAlias, cast
+from typing import IO, Any, Union, cast
+
+if sys.version_info >= (3, 10):
+    from typing import TypeAlias
+else:
+    from typing_extensions import TypeAlias
 
 from ..abc import Process
 from ._eventloop import get_async_backend
 from ._tasks import create_task_group
 
-StrOrBytesPath: TypeAlias = str | bytes | PathLike[str] | PathLike[bytes]
+StrOrBytesPath: TypeAlias = Union[str, bytes, "PathLike[str]", "PathLike[bytes]"]
 
 
 async def run_process(
@@ -169,17 +175,19 @@ async def open_process(
 
     """
     kwargs: dict[str, Any] = {}
-    if user is not None:
-        kwargs["user"] = user
+    if sys.version_info >= (3, 9):
+        # user/group/extra_groups/umask were added to subprocess.Popen in Python 3.9
+        if user is not None:
+            kwargs["user"] = user
 
-    if group is not None:
-        kwargs["group"] = group
+        if group is not None:
+            kwargs["group"] = group
 
-    if extra_groups is not None:
-        kwargs["extra_groups"] = extra_groups
+        if extra_groups is not None:
+            kwargs["extra_groups"] = extra_groups
 
-    if umask >= 0:
-        kwargs["umask"] = umask
+        if umask >= 0:
+            kwargs["umask"] = umask
 
     return await get_async_backend().open_process(
         command,

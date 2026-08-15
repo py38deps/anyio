@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import socket
 import ssl
+import sys
 from contextlib import AbstractContextManager, ExitStack
 from threading import Thread
 from typing import NoReturn
@@ -102,6 +103,11 @@ class TestTLSStream:
         assert response == b"olleh"
 
     @pytest.mark.parametrize("max_bytes", [0, -1])
+    @pytest.mark.xfail(
+        sys.platform == "win32",
+        reason="TLS handshake races with the server socket being closed on Windows",
+        strict=False,
+    )
     async def test_receive_invalid_max_bytes(
         self,
         server_context: ssl.SSLContext,

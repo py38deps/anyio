@@ -6,7 +6,7 @@ import sys
 from collections.abc import Callable, Generator, Iterator
 from contextlib import ExitStack, contextmanager
 from inspect import isasyncgenfunction, iscoroutinefunction, ismethod
-from typing import Any, cast
+from typing import Any, Dict, Tuple, cast
 
 import pytest
 from _pytest.fixtures import FuncFixtureInfo, SubRequest
@@ -37,7 +37,10 @@ def extract_backend_and_options(backend: object) -> tuple[str, dict[str, Any]]:
         return backend, {}
     elif isinstance(backend, tuple) and len(backend) == 2:
         if isinstance(backend[0], str) and isinstance(backend[1], dict):
-            return cast(tuple[str, dict[str, Any]], backend)
+            if sys.version_info >= (3, 9):
+                return cast(tuple[str, dict[str, Any]], backend)
+            else:
+                return cast(Tuple[str, Dict[str, Any]], backend)
 
     raise TypeError("anyio_backend must be either a string or tuple of (string, dict)")
 
@@ -310,7 +313,7 @@ class FreePortFactory:
 
     def __init__(self, kind: socket.SocketKind) -> None:
         self._kind = kind
-        self._generated = set[int]()
+        self._generated: set[int] = set()
 
     @property
     def kind(self) -> socket.SocketKind:

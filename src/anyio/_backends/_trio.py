@@ -10,13 +10,17 @@ import weakref
 from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
-    Awaitable,
     Callable,
     Collection,
     Coroutine,
     Iterable,
     Sequence,
 )
+
+if sys.version_info >= (3, 9):
+    from collections.abc import Awaitable
+else:
+    from typing import Awaitable
 from contextlib import AbstractContextManager
 from contextvars import Context
 from dataclasses import dataclass
@@ -32,16 +36,41 @@ from typing import (
     Any,
     Generic,
     Literal,
+    List,
     NoReturn,
-    ParamSpec,
+    Tuple,
     TypeVar,
     cast,
     overload,
 )
 
+if sys.version_info >= (3, 10):
+    from typing import ParamSpec
+else:
+    from typing_extensions import ParamSpec
+
 import trio.from_thread
 import trio.lowlevel
 from outcome import Error, Outcome, Value
+
+
+def _trio_accepts_cancel_reason() -> bool:
+    """Return ``True`` if the installed trio's CancelScope.cancel() accepts a reason.
+
+    The ``reason`` parameter was added in trio 0.31.0 (trio PR #3256).
+    """
+    try:
+        version = tuple(int(x) for x in trio.__version__.split(".")[:2])
+    except (AttributeError, TypeError, ValueError):
+        # If the version cannot be parsed, conservatively assume that the reason
+        # argument is not supported (cancel() without arguments works with every
+        # trio version)
+        return False
+
+    return version >= (0, 31)
+
+
+_CANCEL_ACCEPTS_REASON = _trio_accepts_cancel_reason()
 from trio.lowlevel import (
     current_root_task,
     current_task,
@@ -164,7 +193,11 @@ class CancelScope(BaseCancelScope):
         return self.__original.__exit__(exc_type, exc_val, exc_tb)
 
     def cancel(self, reason: str | None = None) -> None:
-        self.__original.cancel(reason)
+        if _CANCEL_ACCEPTS_REASON:
+            self.__original.cancel(reason)
+        else:
+            # Trio < 0.31's CancelScope.cancel() does not accept a reason
+            self.__original.cancel()
 
     @property
     def deadline(self) -> float:
@@ -983,12 +1016,24 @@ class TestRunner(abc.TestRunner):
                 self._call_queue.get()()
 
     def is_running(self) -> bool:
-        return trio.lowlevel.in_trio_task()
+        if hasattr(trio.lowlevel, "in_trio_task"):
+            return trio.lowlevel.in_trio_task()
+        else:
+            try:
+                trio.lowlevel.current_task()
+                return True
+            except RuntimeError:
+                return False
 
     async def _run_tests_and_fixtures(self) -> None:
-        self._send_stream, receive_stream = create_memory_object_stream[
+        stream_type = (
             tuple[Awaitable[Any], list[Outcome]]
-        ](1)
+            if sys.version_info >= (3, 9)
+            else Tuple[Awaitable[Any], List[Outcome]]
+        )
+        self._send_stream, receive_stream = create_memory_object_stream[stream_type](
+            1
+        )
         with receive_stream:
             async for awaitable, outcome_holder in receive_stream:
                 try:

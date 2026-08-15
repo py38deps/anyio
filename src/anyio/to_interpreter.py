@@ -10,7 +10,7 @@ import os
 import sys
 from collections import deque
 from collections.abc import Callable
-from typing import Any, Final, TypeVar
+from typing import Any, Deque, Final, TypeVar
 
 from . import current_time, to_thread
 from ._core._exceptions import BrokenWorkerInterpreter
@@ -160,7 +160,8 @@ MAX_WORKER_IDLE_TIME = (
 T_Retval = TypeVar("T_Retval")
 PosArgsT = TypeVarTuple("PosArgsT")
 
-_idle_workers = RunVar[deque[_Worker]]("_available_workers")
+_WorkerQueue = deque[_Worker] if sys.version_info >= (3, 9) else Deque[_Worker]
+_idle_workers = RunVar[_WorkerQueue]("_available_workers")
 _default_interpreter_limiter = RunVar[CapacityLimiter]("_default_interpreter_limiter")
 
 

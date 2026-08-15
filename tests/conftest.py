@@ -3,11 +3,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import platform
+import re
 import ssl
 import sys
 from collections.abc import Awaitable, Callable, Coroutine, Generator, Iterator
 from ssl import SSLContext
-from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
+
+if sys.version_info >= (3, 10):
+    from typing import ParamSpec
+else:
+    from typing_extensions import ParamSpec
 from unittest.mock import Mock
 
 import pytest
@@ -20,6 +26,125 @@ from anyio._core._eventloop import current_async_library
 
 if TYPE_CHECKING:
     from blockbuster import BlockBuster
+
+if sys.version_info < (3, 10):
+    # anext() was added in Python 3.10
+    async def anext(aiter: Any, default: Any = ...) -> Any:
+        try:
+            return await aiter.__anext__()
+        except StopAsyncIteration:
+            if default is not ...:
+                return default
+            raise
+
+if not hasattr(pytest, "RaisesExc"):
+    # pytest < 8.4 compatibility shims
+    if sys.version_info >= (3, 11):
+        from builtins import BaseExceptionGroup
+    else:
+        from exceptiongroup import BaseExceptionGroup
+
+    class RaisesExc:
+        def __init__(
+            self,
+            exc_type: type[BaseException] | None = None,
+            /,
+            *,
+            match: str | None = None,
+            check: Callable[[BaseException], bool] | None = None,
+        ) -> None:
+            self.exc_type = exc_type
+            self.match = match
+            self.check = check
+
+        def matches(self, exc: BaseException) -> bool:
+            if self.exc_type is not None and not isinstance(exc, self.exc_type):
+                return False
+            if self.match is not None and re.search(self.match, str(exc)) is None:
+                return False
+            if self.check is not None and not self.check(exc):
+                return False
+            return True
+
+    pytest.RaisesExc = RaisesExc
+
+if not hasattr(pytest, "RaisesGroup"):
+    class RaisesGroup:
+        def __init__(
+            self,
+            *expected: Any,
+            match: str | None = None,
+            check: Callable[[BaseException], bool] | None = None,
+            allow_unwrapped: bool = False,
+        ) -> None:
+            self._expected = list(expected)
+            self._match = match
+            self._check = check
+            self._allow_unwrapped = allow_unwrapped
+            self.value: BaseException | None = None
+
+        def _matches_flat(self, group: BaseExceptionGroup[Any]) -> bool:
+            remaining = list(group.exceptions)
+            for exp in self._expected:
+                for i, exc in enumerate(remaining):
+                    if isinstance(exp, type) and isinstance(exc, exp):
+                        del remaining[i]
+                        break
+                    elif isinstance(exp, RaisesExc) and exp.matches(exc):
+                        del remaining[i]
+                        break
+                    elif (
+                        isinstance(exp, RaisesGroup)
+                        and isinstance(exc, BaseExceptionGroup)
+                        and exp.matches_group(exc)
+                    ):
+                        del remaining[i]
+                        break
+                else:
+                    return False
+
+            return not remaining
+
+        def matches_group(self, group: BaseExceptionGroup[Any]) -> bool:
+            if self._match is not None and re.search(self._match, str(group)) is None:
+                return False
+            if not self._matches_flat(group):
+                return False
+            if self._check is not None and not self._check(group):
+                return False
+            return True
+
+        def __enter__(self) -> RaisesGroup:
+            return self
+
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc_val: BaseException | None,
+            exc_tb: Any,
+        ) -> bool:
+            if exc_type is None:
+                raise AssertionError("DID NOT RAISE")
+
+            if isinstance(exc_val, BaseExceptionGroup):
+                if not self.matches_group(exc_val):
+                    raise AssertionError(f"exception group did not match: {exc_val!r}")
+            elif self._allow_unwrapped and len(self._expected) == 1:
+                exp = self._expected[0]
+                ok = (isinstance(exp, type) and isinstance(exc_val, exp)) or (
+                    isinstance(exp, RaisesExc) and exp.matches(exc_val)
+                )
+                if not ok:
+                    raise AssertionError(f"exception did not match: {exc_val!r}")
+            else:
+                raise AssertionError(
+                    f"expected exception group, got {type(exc_val).__name__}: {exc_val!r}"
+                )
+
+            self.value = exc_val
+            return True
+
+    pytest.RaisesGroup = RaisesGroup
 
 T = TypeVar("T")
 P = ParamSpec("P")

@@ -11,14 +11,14 @@ from anyio.abc import ByteReceiveStream
 from anyio.streams.file import FileReadStream, FileStreamAttribute, FileWriteStream
 
 
-class TestFileReadStream:
-    @pytest.fixture(scope="class")
-    @classmethod
-    def file_path(cls, tmp_path_factory: TempPathFactory) -> Path:
-        path = tmp_path_factory.mktemp("filestream") / "data.txt"
-        path.write_text("Hello")
-        return path
+@pytest.fixture(scope="class")
+def file_path(tmp_path_factory: TempPathFactory) -> Path:
+    path = tmp_path_factory.mktemp("filestream") / "data.txt"
+    path.write_text("Hello")
+    return path
 
+
+class TestFileReadStream:
     @pytest.fixture(params=[False, True], ids=["str", "path"])
     def file_path_or_str(self, request: SubRequest, file_path: Path) -> Path | str:
         return file_path if request.param else str(file_path)

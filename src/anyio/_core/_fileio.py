@@ -4,12 +4,16 @@ import os
 import pathlib
 import sys
 from collections.abc import (
-    AsyncIterator,
     Callable,
     Iterable,
     Iterator,
     Sequence,
 )
+
+if sys.version_info >= (3, 9):
+    from collections.abc import AsyncIterator
+else:
+    from typing import AsyncIterator
 from dataclasses import dataclass
 from functools import partial
 from os import PathLike
@@ -947,14 +951,24 @@ class Path:
         errors: str | None = None,
         newline: str | None = None,
     ) -> int:
-        return await to_thread.run_sync(
-            self._path.write_text,
-            data,
-            encoding,
-            errors,
-            newline,
-            limiter=self._limiter,
-        )
+        if sys.version_info >= (3, 10):
+            return await to_thread.run_sync(
+                self._path.write_text,
+                data,
+                encoding,
+                errors,
+                newline,
+                limiter=self._limiter,
+            )
+        else:
+            # pathlib.Path.write_text() gained the newline parameter in Python 3.10
+            return await to_thread.run_sync(
+                self._path.write_text,
+                data,
+                encoding,
+                errors,
+                limiter=self._limiter,
+            )
 
 
 PathLike.register(Path)

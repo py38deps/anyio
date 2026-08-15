@@ -10,6 +10,7 @@ __all__ = (
 )
 
 import functools
+import sys
 from collections import OrderedDict
 from collections.abc import (
     AsyncIterable,
@@ -25,13 +26,17 @@ from typing import (
     Any,
     Generic,
     NamedTuple,
-    ParamSpec,
     TypedDict,
     TypeVar,
     cast,
     final,
     overload,
 )
+
+if sys.version_info >= (3, 10):
+    from typing import ParamSpec
+else:
+    from typing_extensions import ParamSpec
 from weakref import WeakKeyDictionary
 
 from ._core._eventloop import current_time
