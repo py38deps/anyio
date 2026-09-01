@@ -106,18 +106,22 @@ jobs:
         cache: pip
         cache-dependency-path: pyproject.toml
     - name: Install the project and its dependencies
-      if: matrix.lowest-bound == false && matrix.python-version != '3.8'
+      if: matrix.lowest-bound == false && matrix.python-version != '3.8' && matrix.python-version != '3.9'
       run: pip install --group test -e .${{ matrix.extras }}
-    - name: Install the project and its dependencies (Python 3.8)
+    - name: Install the project and its dependencies (Python 3.8/3.9)
       # pip --group requires pip >= 25.1 which no longer supports Python 3.8, so use uv instead
-      if: matrix.lowest-bound == false && matrix.python-version == '3.8'
+      # trio >= 0.32.0 requires Python >= 3.10 upstream, so install the py38deps backport
+      # (trio 0.34.0, supports 3.8+) from git before resolving the project extras.
+      if: matrix.lowest-bound == false && (matrix.python-version == '3.8' || matrix.python-version == '3.9')
       run: |
         pip install uv
+        uv pip install --system "trio @ git+https://github.com/py38deps/trio.git@master"
         uv pip install --system --group test -e .${{ matrix.extras }}
     - name: Install the project and its dependencies (lowest bound)
       if: matrix.lowest-bound == true
       run: |
         pip install uv
+        uv pip install --system "trio @ git+https://github.com/py38deps/trio.git@master"
         uv pip install --system --resolution lowest-direct --group test -e .${{ matrix.extras }}
     - name: Patch /etc/hosts
       if: runner.os != 'Windows'
