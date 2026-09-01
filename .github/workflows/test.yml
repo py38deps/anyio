@@ -1,4 +1,4 @@
-name: test suite
+﻿name: test suite
 
 on:
   push:
@@ -115,13 +115,13 @@ jobs:
       if: matrix.lowest-bound == false && (matrix.python-version == '3.8' || matrix.python-version == '3.9')
       run: |
         pip install uv
-        pip install "trio @ git+https://github.com/py38deps/trio.git@master"
+        pip install "trio @ git+https://github.com/py38deps/trio.git@main"
         uv pip install --system --group test -e .${{ matrix.extras }}
     - name: Install the project and its dependencies (lowest bound)
       if: matrix.lowest-bound == true
       run: |
         pip install uv
-        pip install "trio @ git+https://github.com/py38deps/trio.git@master"
+        pip install "trio @ git+https://github.com/py38deps/trio.git@main"
         uv pip install --system --resolution lowest-direct --group test -e .${{ matrix.extras }}
     - name: Patch /etc/hosts
       if: runner.os != 'Windows'
