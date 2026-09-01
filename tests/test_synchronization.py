@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import math
-import sys
 from contextlib import AbstractContextManager
 from typing import Any
 
@@ -713,10 +712,16 @@ class TestCapacityLimiter:
         )
 
     async def test_bad_init_value(self, anyio_backend_name: str) -> None:
-        # TODO: Remove this once Python 3.9 is dropped
-        if sys.version_info < (3, 10) and anyio_backend_name == "trio":
-            bad_value = 0
-            min_value = 1
+        # trio < 0.34 does not support zero-capacity limiters
+        if anyio_backend_name == "trio":
+            import trio
+
+            if tuple(int(part) for part in trio.__version__.split(".")) < (0, 34):
+                bad_value = 0
+                min_value = 1
+            else:
+                bad_value = -1
+                min_value = 0
         else:
             bad_value = -1
             min_value = 0
@@ -726,8 +731,11 @@ class TestCapacityLimiter:
         )
 
     async def test_zero_tokens(self, anyio_backend_name: str) -> None:
-        if sys.version_info < (3, 10) and anyio_backend_name == "trio":
-            pytest.skip("Trio does not support zero-capacity limiters on Python 3.9")
+        if anyio_backend_name == "trio":
+            import trio
+
+            if tuple(int(part) for part in trio.__version__.split(".")) < (0, 34):
+                pytest.skip("Trio < 0.34 does not support zero-capacity limiters")
 
         limiter = CapacityLimiter(0)
         assert limiter.total_tokens == 0
