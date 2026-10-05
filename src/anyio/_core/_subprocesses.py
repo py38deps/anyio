@@ -12,7 +12,7 @@ if sys.version_info >= (3, 10):
 else:
     from typing_extensions import TypeAlias
 
-from ..abc import Process
+from ..abc import Process  # noqa: TC001
 from ._eventloop import get_async_backend
 from ._tasks import create_task_group
 

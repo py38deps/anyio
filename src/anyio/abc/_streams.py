@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from abc import ABCMeta, abstractmethod
 from collections.abc import Callable
-from typing import Any, Generic, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union
 
 if sys.version_info >= (3, 10):
     from typing import TypeAlias
@@ -13,7 +13,9 @@ else:
 from .._core._exceptions import EndOfStream
 from .._core._typedattr import TypedAttributeProvider
 from ._resources import AsyncResource
-from ._tasks import TaskGroup
+
+if TYPE_CHECKING:
+    from ._tasks import TaskGroup
 
 T_Item = TypeVar("T_Item")
 T_co = TypeVar("T_co", covariant=True)
@@ -21,7 +23,7 @@ T_contra = TypeVar("T_contra", contravariant=True)
 
 
 class UnreliableObjectReceiveStream(
-    Generic[T_co], AsyncResource, TypedAttributeProvider
+    AsyncResource, TypedAttributeProvider, Generic[T_co]
 ):
     """
     An interface for receiving objects.
@@ -56,7 +58,7 @@ class UnreliableObjectReceiveStream(
 
 
 class UnreliableObjectSendStream(
-    Generic[T_contra], AsyncResource, TypedAttributeProvider
+    AsyncResource, TypedAttributeProvider, Generic[T_contra]
 ):
     """
     An interface for sending objects.
@@ -188,9 +190,7 @@ AnyUnreliableByteSendStream: TypeAlias = Union[
     UnreliableObjectSendStream[bytes], ByteSendStream
 ]
 #: Type alias for all unreliable bytes-oriented streams.
-AnyUnreliableByteStream: TypeAlias = Union[
-    UnreliableObjectStream[bytes], ByteStream
-]
+AnyUnreliableByteStream: TypeAlias = Union[UnreliableObjectStream[bytes], ByteStream]
 #: Type alias for all bytes-oriented receive streams.
 AnyByteReceiveStream: TypeAlias = Union[ObjectReceiveStream[bytes], ByteReceiveStream]
 #: Type alias for all bytes-oriented send streams.
@@ -199,7 +199,7 @@ AnyByteSendStream: TypeAlias = Union[ObjectSendStream[bytes], ByteSendStream]
 AnyByteStream: TypeAlias = Union[ObjectStream[bytes], ByteStream]
 
 
-class Listener(Generic[T_co], AsyncResource, TypedAttributeProvider):
+class Listener(AsyncResource, TypedAttributeProvider, Generic[T_co]):
     """An interface for objects that let you accept incoming connections."""
 
     @abstractmethod

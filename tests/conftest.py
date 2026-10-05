@@ -37,6 +37,7 @@ if sys.version_info < (3, 10):
                 return default
             raise
 
+
 if not hasattr(pytest, "RaisesExc"):
     # pytest < 8.4 compatibility shims
     if sys.version_info >= (3, 11):
@@ -69,6 +70,7 @@ if not hasattr(pytest, "RaisesExc"):
     pytest.RaisesExc = RaisesExc
 
 if not hasattr(pytest, "RaisesGroup"):
+
     class RaisesGroup:
         def __init__(
             self,
@@ -121,7 +123,7 @@ if not hasattr(pytest, "RaisesGroup"):
             self,
             exc_type: type[BaseException] | None,
             exc_val: BaseException | None,
-            exc_tb: Any,
+            exc_tb: object,
         ) -> bool:
             if exc_type is None:
                 raise AssertionError("DID NOT RAISE")

@@ -9,7 +9,7 @@ from contextlib import AsyncExitStack
 from io import IOBase
 from ipaddress import IPv4Address, IPv6Address
 from socket import AddressFamily
-from typing import Any, Tuple, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Tuple, TypeVar, Union
 
 if sys.version_info >= (3, 10):
     from typing import TypeAlias
@@ -23,7 +23,9 @@ from .._core._typedattr import (
     typed_attribute,
 )
 from ._streams import ByteStream, Listener, UnreliableObjectStream
-from ._tasks import TaskGroup
+
+if TYPE_CHECKING:
+    from ._tasks import TaskGroup
 
 IPAddressType: TypeAlias = Union[str, IPv4Address, IPv6Address]
 IPSockAddrType: TypeAlias = Tuple[str, int]

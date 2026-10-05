@@ -58,8 +58,10 @@ async def test_run_process_checked() -> None:
             [
                 sys.executable,
                 "-c",
-                'import sys; print("stderr-text", file=sys.stderr); '
-                'print("stdout-text"); sys.exit(1)',
+                (
+                    'import sys; print("stderr-text", file=sys.stderr); '
+                    'print("stdout-text"); sys.exit(1)'
+                ),
             ],
             check=True,
         )
@@ -151,17 +153,19 @@ async def test_open_process_connect_to_file(tmp_path: Path) -> None:
     stdinfile.write_text("Hello, process!\n")
     stdoutfile = tmp_path / "stdout"
     stderrfile = tmp_path / "stderr"
-    with stdinfile.open("rb") as fin, \
-            stdoutfile.open("wb") as fout, \
-            stderrfile.open("wb") as ferr:
+    with stdinfile.open("rb") as fin, stdoutfile.open("wb") as fout, stderrfile.open(
+        "wb"
+    ) as ferr:
         async with await open_process(
             [
                 sys.executable,
                 "-c",
-                "import sys; txt = sys.stdin.read().strip(); "
-                'print("stdin says", repr(txt), "but stderr says NO!", '
-                "file=sys.stderr); "
-                'print("stdin says", repr(txt), "and stdout says YES!")',
+                (
+                    "import sys; txt = sys.stdin.read().strip(); "
+                    'print("stdin says", repr(txt), "but stderr says NO!", '
+                    "file=sys.stderr); "
+                    'print("stdin says", repr(txt), "and stdout says YES!")'
+                ),
             ],
             stdin=fin,
             stdout=fout,
@@ -182,17 +186,19 @@ async def test_run_process_connect_to_file(tmp_path: Path) -> None:
     stdinfile.write_text("Hello, process!\n")
     stdoutfile = tmp_path / "stdout"
     stderrfile = tmp_path / "stderr"
-    with stdinfile.open("rb") as fin, \
-            stdoutfile.open("wb") as fout, \
-            stderrfile.open("wb") as ferr:
+    with stdinfile.open("rb") as fin, stdoutfile.open("wb") as fout, stderrfile.open(
+        "wb"
+    ) as ferr:
         await run_process(
             [
                 sys.executable,
                 "-c",
-                "import sys; txt = sys.stdin.read().strip(); "
-                'print("stdin says", repr(txt), "but stderr says NO!", '
-                "file=sys.stderr); "
-                'print("stdin says", repr(txt), "and stdout says YES!")',
+                (
+                    "import sys; txt = sys.stdin.read().strip(); "
+                    'print("stdin says", repr(txt), "but stderr says NO!", '
+                    "file=sys.stderr); "
+                    'print("stdin says", repr(txt), "and stdout says YES!")'
+                ),
             ],
             stdin=fin,
             stdout=fout,
@@ -421,8 +427,9 @@ async def test_close_while_reading() -> None:
     time.sleep(3)
     """)
 
-    async with await open_process([sys.executable, "-c", code]) as process, \
-            create_task_group() as tg:
+    async with await open_process(
+        [sys.executable, "-c", code]
+    ) as process, create_task_group() as tg:
         assert process.stdout
         tg.start_soon(process.stdout.aclose)
         with pytest.raises(ClosedResourceError):

@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:   # manual trigger button on GitHub Actions page
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   changed-files:
     runs-on: ubuntu-latest
@@ -62,7 +66,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15", "pypy3.11-v7.3.23"]
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.14t", "3.15", "pypy3.11-v7.3.23"]
         extras: ["[trio]"]
         lowest-bound: [false]
         include:
@@ -105,23 +109,34 @@ jobs:
         allow-prereleases: true
         cache: pip
         cache-dependency-path: pyproject.toml
+    - name: Use the py38deps package index (Python 3.8)
+      # typing_extensions >= 4.16.0 has no Python 3.8 release on PyPI. The sourceless
+      # install test pip-installs into a fresh virtualenv, which inherits
+      # PIP_EXTRA_INDEX_URL from the job environment.
+      if: matrix.python-version == '3.8'
+      shell: bash
+      run: echo "PIP_EXTRA_INDEX_URL=https://py38deps.github.io/py38deps/simple/" >> "$GITHUB_ENV"
+    - name: Install the py38deps backports (Python 3.8/3.9)
+      # trio >= 0.32.0 has no release installable on 3.8/3.9 on PyPI, and
+      # typing_extensions >= 4.16.0 has none for 3.8, so install both from the py38deps
+      # index. uv then reuses the installed versions when it resolves the dependency
+      # groups below.
+      if: matrix.python-version == '3.8' || matrix.python-version == '3.9'
+      run: pip install --extra-index-url https://py38deps.github.io/py38deps/simple/ "trio>=0.32.0" "typing_extensions>=4.16.0"
     - name: Install the project and its dependencies
       if: matrix.lowest-bound == false && matrix.python-version != '3.8' && matrix.python-version != '3.9'
       run: pip install --group test -e .${{ matrix.extras }}
     - name: Install the project and its dependencies (Python 3.8/3.9)
-      # pip --group requires pip >= 25.1 which no longer supports Python 3.8, so use uv instead
-      # trio >= 0.32.0 requires Python >= 3.10 upstream, so install the py38deps backport
-      # (trio 0.34.0, supports 3.8+) from git before resolving the project extras.
+      # pip --group requires pip >= 25.1 which no longer supports Python 3.8, so use uv
+      # instead to resolve the dependency groups.
       if: matrix.lowest-bound == false && (matrix.python-version == '3.8' || matrix.python-version == '3.9')
       run: |
         pip install uv
-        pip install "trio @ git+https://github.com/py38deps/trio.git@main"
         uv pip install --system --group test -e .${{ matrix.extras }}
     - name: Install the project and its dependencies (lowest bound)
       if: matrix.lowest-bound == true
       run: |
         pip install uv
-        pip install "trio @ git+https://github.com/py38deps/trio.git@main"
         uv pip install --system --resolution lowest-direct --group test -e .${{ matrix.extras }}
     - name: Patch /etc/hosts
       if: runner.os != 'Windows'
