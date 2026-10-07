@@ -48,6 +48,12 @@ def test_sourceless_install(tmp_path: Path) -> None:
 
     assert interpreter_path.is_file()
 
+    # Some Python installations (e.g. the python.org 3.8 build for macOS) come with a pip
+    # that is too old to parse this project's pyproject.toml
+    subprocess.run(
+        [interpreter_path, "-m", "pip", "install", "--upgrade", "pip"], check=True
+    )
+
     # Install this project into the virtualenv
     project_root = Path(__file__).parent.parent
     assert project_root.joinpath("src").is_dir()
