@@ -400,6 +400,7 @@ class CancelScope(BaseCancelScope):
         "_cancel_handle",
         "_cancel_reason",
         "_cancelled_caught",
+        "_cancelling_at_enter",
         "_child_scopes",
         "_deadline",
         "_host_task",
@@ -414,6 +415,9 @@ class CancelScope(BaseCancelScope):
         return object.__new__(cls)
 
     def __init__(self, deadline: float = math.inf, shield: bool = False):
+        if math.isnan(deadline):
+            raise ValueError("deadline must not be NaN")
+
         self._deadline = deadline
         self._shield = shield
         self._parent_scope: CancelScope | None = None
@@ -426,6 +430,8 @@ class CancelScope(BaseCancelScope):
         self._cancel_handle: asyncio.Handle | None = None
         self._tasks: set[asyncio.Task] = set()
         self._host_task: asyncio.Task | None = None
+        # Value of Task.cancelling() on the host task when the scope was entered
+        self._cancelling_at_enter = 0
         if sys.version_info >= (3, 11):
             self._pending_uncancellations: int | None = 0
         else:
@@ -455,6 +461,8 @@ class CancelScope(BaseCancelScope):
 
         self._timeout()
         self._active = True
+        if self._pending_uncancellations is not None:
+            self._cancelling_at_enter = host_task.cancelling()
 
         # Start cancelling the host task if the scope was cancelled before entering
         if self._cancel_called:
@@ -511,6 +519,18 @@ class CancelScope(BaseCancelScope):
                 while self._pending_uncancellations:
                     self._host_task.uncancel()
                     self._pending_uncancellations -= 1
+
+                # If the host task still has more cancellation requests pending than it
+                # had when this scope was entered, a native Task.cancel() landed while
+                # the scope was active. If it arrived in the same event loop iteration
+                # as our own cancellation, asyncio folded the two requests into a
+                # single CancelledError carrying our cancellation message, so we must
+                # not swallow that exception even though it looks like ours (#1214).
+                if (
+                    self._pending_uncancellations is not None
+                    and self._host_task.cancelling() > self._cancelling_at_enter
+                ):
+                    return False
 
                 # Update cancelled_caught and check for exceptions we must not swallow
                 if isinstance(exc_val, BaseExceptionGroup):
@@ -735,7 +755,11 @@ class CancelScope(BaseCancelScope):
 
     @deadline.setter
     def deadline(self, value: float) -> None:
-        self._deadline = float(value)
+        value = float(value)
+        if math.isnan(value):
+            raise ValueError("deadline must not be NaN")
+
+        self._deadline = value
         if self._timeout_handle is not None:
             self._timeout_handle.cancel()
             self._timeout_handle = None
@@ -1141,9 +1165,9 @@ class WorkerThread(Thread):
                     return
 
                 context, func, args, future, cancel_scope = item
+                result = None
+                exception: BaseException | None = None
                 if not future.cancelled():
-                    result = None
-                    exception: BaseException | None = None
                     threadlocals.current_cancel_scope = cancel_scope
                     try:
                         result = context.run(func, *args)
@@ -1152,16 +1176,17 @@ class WorkerThread(Thread):
                     finally:
                         del threadlocals.current_cancel_scope
 
-                    try:
-                        self.loop.call_soon_threadsafe(
-                            self._report_result, future, result, exception
-                        )
-                    except RuntimeError:
-                        if not self.loop.is_closed():
-                            raise
+                # Report the result even if the future was cancelled before the call
+                # was started, so that the worker is put back on the idle list
+                try:
+                    self.loop.call_soon_threadsafe(
+                        self._report_result, future, result, exception
+                    )
+                except RuntimeError:
+                    if not self.loop.is_closed():
+                        raise
 
-                    del result, exception
-
+                del result, exception
                 self.queue.task_done()
                 del item, context, func, args, future, cancel_scope
 
@@ -1400,20 +1425,18 @@ class DatagramProtocol(asyncio.DatagramProtocol):
     read_queue: deque[tuple[bytes, IPSockAddrType]]
     read_event: asyncio.Event
     write_event: asyncio.Event
-    closed_event: asyncio.Event
     exception: Exception | None = None
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         self.read_queue = deque(maxlen=100)  # arbitrary value
         self.read_event = asyncio.Event()
         self.write_event = asyncio.Event()
-        self.closed_event = asyncio.Event()
         self.write_event.set()
+        cast(asyncio.WriteTransport, transport).set_write_buffer_limits(0)
 
     def connection_lost(self, exc: Exception | None) -> None:
         self.read_event.set()
         self.write_event.set()
-        self.closed_event.set()
 
     def datagram_received(self, data: bytes, addr: IPSockAddrType) -> None:
         addr = convert_ipv6_sockaddr(addr)
@@ -1453,8 +1476,10 @@ class SocketStream(abc.SocketStream):
                 and not self._protocol.is_at_eof
             ):
                 self._transport.resume_reading()
-                await self._protocol.read_event.wait()
-                self._transport.pause_reading()
+                try:
+                    await self._protocol.read_event.wait()
+                finally:
+                    self._transport.pause_reading()
             else:
                 await AsyncIOBackend.checkpoint()
 
@@ -1482,7 +1507,12 @@ class SocketStream(abc.SocketStream):
 
     async def send(self, item: bytes) -> None:
         with self._send_guard:
-            await AsyncIOBackend.checkpoint()
+            await AsyncIOBackend.checkpoint_if_cancelled()
+            yielded = False
+
+            if not self._protocol.write_event.is_set():
+                yielded = True
+                await self._protocol.write_event.wait()
 
             if self._closed:
                 raise ClosedResourceError
@@ -1497,7 +1527,15 @@ class SocketStream(abc.SocketStream):
                 else:
                     raise
 
-            await self._protocol.write_event.wait()
+            if not self._protocol.write_event.is_set():
+                await self._protocol.write_event.wait()
+                if self._closed:
+                    # aclose() aborted the transport, discarding the unsent data
+                    raise ClosedResourceError
+                elif self._protocol.exception is not None:
+                    raise BrokenResourceError from self._protocol.exception
+            elif not yielded:
+                await AsyncIOBackend.cancel_shielded_checkpoint()
 
     async def send_eof(self) -> None:
         try:
@@ -1507,15 +1545,8 @@ class SocketStream(abc.SocketStream):
 
     async def aclose(self) -> None:
         self._closed = True
-        if not self._transport.is_closing():
-            try:
-                self._transport.write_eof()
-            except OSError:
-                pass
-
-            self._transport.close()
-            await sleep(0)
-            self._transport.abort()
+        self._transport.abort()
+        await AsyncIOBackend.checkpoint()
 
 
 class _RawSocketMixin:
@@ -1553,15 +1584,16 @@ class _RawSocketMixin:
         return f
 
     async def aclose(self) -> None:
-        if not self._closing:
-            self._closing = True
-            if self.__raw_socket.fileno() != -1:
-                self.__raw_socket.close()
-
+        closing = self._closing
+        self._closing = True
+        self.__raw_socket.close()
+        if not closing:
             if self._receive_future and not self._receive_future.done():
                 self._receive_future.set_result(None)
             if self._send_future and not self._send_future.done():
                 self._send_future.set_result(None)
+
+        await AsyncIOBackend.checkpoint()
 
 
 class UNIXSocketStream(_RawSocketMixin, abc.UNIXSocketStream):
@@ -1664,16 +1696,13 @@ class UNIXSocketStream(_RawSocketMixin, abc.UNIXSocketStream):
                 filenos.append(fd.fileno())
 
         fdarray = array.array("i", filenos)
+        ancdata = [(socket.SOL_SOCKET, socket.SCM_RIGHTS, fdarray)]
+        view = memoryview(message)
         await AsyncIOBackend.checkpoint()
         with self._send_guard:
-            while True:
+            while view:
                 try:
-                    # The ignore can be removed after mypy picks up
-                    # https://github.com/python/typeshed/pull/5545
-                    self._raw_socket.sendmsg(
-                        [message], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, fdarray)]
-                    )
-                    break
+                    bytes_sent = self._raw_socket.sendmsg([view], ancdata)
                 except BlockingIOError:
                     await self._wait_until_writable(loop)
                 except OSError as exc:
@@ -1681,6 +1710,10 @@ class UNIXSocketStream(_RawSocketMixin, abc.UNIXSocketStream):
                         raise ClosedResourceError from None
                     else:
                         raise BrokenResourceError from exc
+                else:
+                    view = view[bytes_sent:]
+                    # The descriptors were sent with the first successful write.
+                    ancdata = []
 
 
 class TCPSocketListener(abc.SocketListener):
@@ -1726,9 +1759,6 @@ class TCPSocketListener(abc.SocketListener):
         return SocketStream(transport, protocol)
 
     async def aclose(self) -> None:
-        if self._closed:
-            return
-
         self._closed = True
         if self._accept_scope:
             # Workaround for https://bugs.python.org/issue41317
@@ -1738,12 +1768,17 @@ class TCPSocketListener(abc.SocketListener):
                 pass
 
             self._accept_scope.cancel()
-            await sleep(0)
 
-        self._raw_socket.close()
+        try:
+            # Lets a cancelled accept() unwind before the socket is closed
+            await AsyncIOBackend.checkpoint()
+        finally:
+            self._raw_socket.close()
 
 
 class UNIXSocketListener(abc.SocketListener):
+    _accept_future: asyncio.Future | None = None
+
     def __init__(self, raw_socket: socket.socket):
         self.__raw_socket = raw_socket
         self._loop = get_running_loop()
@@ -1759,12 +1794,14 @@ class UNIXSocketListener(abc.SocketListener):
                     client_sock.setblocking(False)
                     return UNIXSocketStream(client_sock)
                 except BlockingIOError:
-                    f: asyncio.Future = asyncio.Future()
+                    f = self._accept_future = self._loop.create_future()
                     self._loop.add_reader(self.__raw_socket, f.set_result, None)
-                    f.add_done_callback(
-                        lambda _: self._loop.remove_reader(self.__raw_socket)
-                    )
-                    await f
+                    try:
+                        await f
+                    finally:
+                        if self._accept_future is f:
+                            self._accept_future = None
+                            self._loop.remove_reader(self.__raw_socket)
                 except OSError as exc:
                     if self._closed:
                         raise ClosedResourceError from None
@@ -1773,7 +1810,17 @@ class UNIXSocketListener(abc.SocketListener):
 
     async def aclose(self) -> None:
         self._closed = True
+        if f := self._accept_future:
+            # Deregister the reader before closing the socket so the selector isn't
+            # left holding a closed fd, then wake accept() so it raises
+            # ClosedResourceError
+            self._accept_future = None
+            self._loop.remove_reader(self.__raw_socket)
+            if not f.done():
+                f.set_result(None)
+
         self.__raw_socket.close()
+        await AsyncIOBackend.checkpoint()
 
     @property
     def _raw_socket(self) -> socket.socket:
@@ -1796,10 +1843,8 @@ class UDPSocket(abc.UDPSocket):
 
     async def aclose(self) -> None:
         self._closed = True
-        if not self._transport.is_closing():
-            self._transport.close()
-
-        await self._protocol.closed_event.wait()
+        self._transport.abort()
+        await AsyncIOBackend.checkpoint()
 
     async def receive(self) -> tuple[bytes, IPSockAddrType]:
         with self._receive_guard:
@@ -1820,14 +1865,29 @@ class UDPSocket(abc.UDPSocket):
 
     async def send(self, item: UDPPacketType) -> None:
         with self._send_guard:
-            await AsyncIOBackend.checkpoint()
-            await self._protocol.write_event.wait()
+            await AsyncIOBackend.checkpoint_if_cancelled()
+            yielded = False
+
+            # Wait out any datagram the transport had to buffer
+            if not self._protocol.write_event.is_set():
+                yielded = True
+                await self._protocol.write_event.wait()
+
             if self._closed:
                 raise ClosedResourceError
             elif self._transport.is_closing():
                 raise BrokenResourceError
-            else:
-                self._transport.sendto(*item)
+
+            self._transport.sendto(*item)
+
+            # The high water mark is 0, so the event is clear if the OS refused it
+            if not self._protocol.write_event.is_set():
+                await self._protocol.write_event.wait()
+                if self._closed:
+                    # aclose() aborted the transport, discarding the unsent data
+                    raise ClosedResourceError
+            elif not yielded:
+                await AsyncIOBackend.cancel_shielded_checkpoint()
 
 
 class ConnectedUDPSocket(abc.ConnectedUDPSocket):
@@ -1846,10 +1906,8 @@ class ConnectedUDPSocket(abc.ConnectedUDPSocket):
 
     async def aclose(self) -> None:
         self._closed = True
-        if not self._transport.is_closing():
-            self._transport.close()
-
-        await self._protocol.closed_event.wait()
+        self._transport.abort()
+        await AsyncIOBackend.checkpoint()
 
     async def receive(self) -> bytes:
         with self._receive_guard:
@@ -1872,14 +1930,29 @@ class ConnectedUDPSocket(abc.ConnectedUDPSocket):
 
     async def send(self, item: bytes) -> None:
         with self._send_guard:
-            await AsyncIOBackend.checkpoint()
-            await self._protocol.write_event.wait()
+            await AsyncIOBackend.checkpoint_if_cancelled()
+            yielded = False
+
+            # Wait out any datagram the transport had to buffer
+            if not self._protocol.write_event.is_set():
+                yielded = True
+                await self._protocol.write_event.wait()
+
             if self._closed:
                 raise ClosedResourceError
             elif self._transport.is_closing():
                 raise BrokenResourceError
-            else:
-                self._transport.sendto(item)
+
+            self._transport.sendto(item)
+
+            # The high water mark is 0, so the event is clear if the OS refused it
+            if not self._protocol.write_event.is_set():
+                await self._protocol.write_event.wait()
+                if self._closed:
+                    # aclose() aborted the transport, discarding the unsent data
+                    raise ClosedResourceError
+            elif not yielded:
+                await AsyncIOBackend.cancel_shielded_checkpoint()
 
 
 class UNIXDatagramSocket(_RawSocketMixin, abc.UNIXDatagramSocket):
@@ -2256,7 +2329,7 @@ class CapacityLimiter(BaseCapacityLimiter):
             try:
                 await AsyncIOBackend.cancel_shielded_checkpoint()
             except BaseException:
-                self.release()
+                self.release_on_behalf_of(borrower)
                 raise
 
     def release(self) -> None:
@@ -2846,6 +2919,24 @@ class AsyncIOBackend(AsyncBackend):
         return f.result()
 
     @classmethod
+    def run_sync_soon(
+        cls,
+        func: Callable[[Unpack[PosArgsT]], object],
+        args: tuple[Unpack[PosArgsT]],
+        token: object,
+    ) -> None:
+        loop = cast("AbstractEventLoop", token)
+        context = copy_context()
+        context.run(set_current_async_library, "asyncio")
+        try:
+            loop.call_soon_threadsafe(context.run, func, *args)
+        except RuntimeError:
+            if loop.is_closed():
+                raise RunFinishedError from None
+
+            raise
+
+    @classmethod
     async def open_process(
         cls,
         command: StrOrBytesPath | Sequence[StrOrBytesPath],
@@ -2924,10 +3015,14 @@ class AsyncIOBackend(AsyncBackend):
         return SocketStream(transport, protocol)
 
     @classmethod
-    async def connect_unix(cls, path: str | bytes) -> abc.UNIXSocketStream:
+    async def connect_unix(
+        cls,
+        path: str | bytes,
+        kind: Literal[SocketKind.SOCK_STREAM, SocketKind.SOCK_SEQPACKET],
+    ) -> abc.UNIXSocketStream:
         await cls.checkpoint()
         loop = get_running_loop()
-        raw_socket = socket.socket(socket.AF_UNIX)
+        raw_socket = socket.socket(socket.AF_UNIX, kind)
         raw_socket.setblocking(False)
         while True:
             try:
@@ -3242,7 +3337,11 @@ class AsyncIOBackend(AsyncBackend):
 
     @classmethod
     def get_current_task(cls) -> TaskInfo:
-        return AsyncIOTaskInfo(current_task())  # type: ignore[arg-type]
+        task = current_task()
+        if task is None:
+            raise RuntimeError("There is no task currently running")
+
+        return AsyncIOTaskInfo(task)
 
     @classmethod
     def get_running_tasks(cls) -> Sequence[TaskInfo]:
