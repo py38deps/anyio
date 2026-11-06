@@ -43,7 +43,8 @@ jobs:
     needs: changed-files
     if: |
       ${{
-        (needs.changed-files.outputs.workflow-changed == 'true')
+        (github.event_name == 'workflow_dispatch')
+        || (needs.changed-files.outputs.workflow-changed == 'true')
         || (needs.changed-files.outputs.src-changed == 'true')
       }}
     steps:
@@ -92,7 +93,8 @@ jobs:
     needs: changed-files
     if: |
       ${{
-        (needs.changed-files.outputs.workflow-changed == 'true')
+        (github.event_name == 'workflow_dispatch')
+        || (needs.changed-files.outputs.workflow-changed == 'true')
         || (needs.changed-files.outputs.pyproject-changed == 'true')
         || (needs.changed-files.outputs.src-changed == 'true')
         || (needs.changed-files.outputs.tests-changed == 'true')
@@ -166,7 +168,8 @@ jobs:
     needs: changed-files
     if: |
       ${{
-        (needs.changed-files.outputs.workflow-changed == 'true')
+        (github.event_name == 'workflow_dispatch')
+        || (needs.changed-files.outputs.workflow-changed == 'true')
         || (needs.changed-files.outputs.pyproject-changed == 'true')
         || (needs.changed-files.outputs.src-changed == 'true')
         || (needs.changed-files.outputs.docs-changed == 'true')
